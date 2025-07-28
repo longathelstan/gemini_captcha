@@ -1,0 +1,13 @@
+venv/
+.venv/
+
+__pycache__/
+*.pyc
+
+.env
+
+solved_captchas_gemini/
+*.csv
+
+.git/
+.gitignore
