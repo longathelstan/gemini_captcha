@@ -86,49 +86,57 @@ def save_data_to_csv(all_records, filepath):
     print(f"\n [SAVE] Saved {len(df)} unique records to '{filepath}'.")
 
 def solve_captcha_with_gemini():
-    """Fetches a CAPTCHA and uses a rotating Gemini API key to solve it, handling rate limits."""
+    """Fetches a CAPTCHA and uses a rotating Gemini API key and model to solve it."""
     global current_key_index
-    
-    try:
-        selected_key = API_KEYS[current_key_index]
-        genai.configure(api_key=selected_key)
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
-        print(f"    (Using API Key #{current_key_index + 1})")
 
-        timestamp = int(time.time() * 1000)
-        url = f"{CAPTCHA_URL}?returnType=image&site=32982&width=150&height=50&t={timestamp}"
+    models_to_try = ['gemini-1.5-flash-latest', 'gemini-2.0-flash']
+    timestamp = int(time.time() * 1000)
+    url = f"{CAPTCHA_URL}?returnType=image&site=32982&width=150&height=50&t={timestamp}"
+
+    try:
         response = session.get(url, headers=HEADERS, timeout=10)
         response.raise_for_status()
         image_bytes = response.content
-
         image_part = {"mime_type": "image/png", "data": image_bytes}
         prompt = "This is a CAPTCHA image. Read the characters in it. Return only the character string, with no explanations or formatting."
-        
-        gemini_response = model.generate_content([prompt, image_part])
-        solved_text = gemini_response.text.strip()
-        
-        final_text = (match.group(0) if (match := re.search(r'[a-zA-Z0-9]+', solved_text)) else solved_text)
-        
-        if final_text:
-            safe_filename = re.sub(r'[^\w\-_\.]', '_', final_text)[:50]
-            save_path = os.path.join(CAPTCHA_SAVE_FOLDER, f"{safe_filename}_{timestamp}.png")
+
+        for model_name in models_to_try:
             try:
-                with open(save_path, "wb") as f: f.write(image_bytes)
-            except OSError as e: print(f"    [!] Could not save CAPTCHA image: {e}")
-        
+                selected_key = API_KEYS[current_key_index]
+                genai.configure(api_key=selected_key)
+                model = genai.GenerativeModel(model_name)
+                print(f"    (Using API Key #{current_key_index + 1}, Model: {model_name})")
+
+                gemini_response = model.generate_content([prompt, image_part])
+                solved_text = gemini_response.text.strip()
+                final_text = (match.group(0) if (match := re.search(r'[a-zA-Z0-9]+', solved_text)) else solved_text)
+
+                if final_text:
+                    safe_filename = re.sub(r'[^\w\-_\.]', '_', final_text)[:50]
+                    save_path = os.path.join(CAPTCHA_SAVE_FOLDER, f"{safe_filename}_{timestamp}.png")
+                    try:
+                        with open(save_path, "wb") as f: f.write(image_bytes)
+                    except OSError as e:
+                        print(f"    [!] Could not save CAPTCHA image: {e}")
+
+                    current_key_index = (current_key_index + 1) % len(API_KEYS)
+                    return final_text
+
+            except Exception as model_error:
+                error_msg = str(model_error).lower()
+                if any(keyword in error_msg for keyword in ['rate', 'quota', 'limit', 'exceeded', '429']):
+                    print(f"      [RATE LIMIT] {model_name} rate limit hit. Trying next model or rotating key.")
+                    continue
+                else:
+                    print(f"    [ERROR] {model_name} failed unexpectedly: {model_error}")
+                    break
+
         current_key_index = (current_key_index + 1) % len(API_KEYS)
-        return final_text
+        return GEMINI_RATE_LIMIT_FLAG
 
     except Exception as e:
-        error_msg = str(e).lower()
-        if any(keyword in error_msg for keyword in ['rate', 'quota', 'limit', 'exceeded', '429']):
-            print(f"      [RATE LIMIT] Gemini API rate limit hit on Key #{current_key_index + 1}. Rotating key.")
-            current_key_index = (current_key_index + 1) % len(API_KEYS)
-            return GEMINI_RATE_LIMIT_FLAG
-        else:
-            print(f"    [ERROR] An unexpected error occurred with Gemini API Key #{current_key_index + 1}: {e}")
-            current_key_index = (current_key_index + 1) % len(API_KEYS)
-            return ""
+        print(f"    [ERROR] Could not fetch CAPTCHA image: {e}")
+        return ""
 
 def fetch_exam_scores(student_id, captcha):
     """Submits the student ID and solved CAPTCHA to fetch the score data."""
