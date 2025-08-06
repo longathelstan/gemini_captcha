@@ -79,7 +79,7 @@ OUTPUT_CSV_FILE = "exam_scores_hatinh.csv"
 ## ▶️ Running the Script
 
 ```bash
-python main.py
+python getdiem.py
 ```
 
 The script will:
